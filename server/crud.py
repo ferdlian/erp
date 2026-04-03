@@ -206,5 +206,41 @@ def reset_database(db: Session):
     db.query(models.WorkflowNode).delete()
     db.query(models.WorkflowEdge).delete()
     db.query(models.Workflow).delete()
+    # Also delete notifications and messages if full reset is wanted
+    db.query(models.Notification).delete()
+    db.query(models.Message).delete()
     db.commit()
     return True
+
+# --- TopBar ---
+def get_notifications(db: Session, skip: int = 0, limit: int = 50):
+    return db.query(models.Notification).order_by(models.Notification.id.desc()).offset(skip).limit(limit).all()
+
+def get_messages(db: Session, skip: int = 0, limit: int = 50):
+    return db.query(models.Message).order_by(models.Message.id.desc()).offset(skip).limit(limit).all()
+
+def mark_all_notifications_read(db: Session):
+    db.query(models.Notification).filter(models.Notification.is_read == 0).update({models.Notification.is_read: 1}, synchronize_session=False)
+    db.commit()
+    return True
+
+def init_topbar_mock_data(db: Session):
+    notif_count = db.query(models.Notification).count()
+    if notif_count == 0:
+        db.add_all([
+            models.Notification(title="Stok Kritis", message="Laptop XPS 13 hanya tersisa 2 unit di gudang.", type="alert", time_label="10 menit yang lalu", is_read=0, timestamp="2026-04-03T10:00:00"),
+            models.Notification(title="Faktur Jatuh Tempo", message="Invoice INV-2026-041 belum dibayar (Rp 45.000.000).", type="warning", time_label="1 jam yang lalu", is_read=0, timestamp="2026-04-03T09:00:00"),
+            models.Notification(title="Server AI Selesai", message="Pelatihan model analitik Q1 telah rampung.", type="success", time_label="2 jam yang lalu", is_read=0, timestamp="2026-04-03T08:00:00"),
+            models.Notification(title="Pencapaian Kuartal", message="Target penjualan Q2 telah mencapai 80%.", type="info", time_label="Kemarin", is_read=1, timestamp="2026-04-02T15:00:00")
+        ])
+    
+    msg_count = db.query(models.Message).count()
+    if msg_count == 0:
+        db.add_all([
+            models.Message(sender="Budi (Finance)", avatar="B", message_content="Tolong approvenya untuk invoice Q2.", time_label="10:30 AM", is_unread=1, timestamp="2026-04-03T10:30:00"),
+            models.Message(sender="Sinta (HR)", avatar="S", message_content="Dokumen cuti karyawan sudah dikirim.", time_label="Kemarin", is_unread=1, timestamp="2026-04-02T09:00:00"),
+            models.Message(sender="NEXUS AI Bot", avatar="🤖", message_content="Insight baru: Prediksi penjualan turun 5% minggu depan.", time_label="Selasa", is_unread=0, timestamp="2026-04-01T14:00:00")
+        ])
+    
+    if notif_count == 0 or msg_count == 0:
+        db.commit()

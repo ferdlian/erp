@@ -261,3 +261,24 @@ export interface ChatMessage {
     data: Record<string, unknown>[];
   };
 }
+
+// ===== TopBar Notifications & Messages =====
+export interface AppNotification {
+  id: number;
+  title: string;
+  message: string;
+  type: 'alert' | 'warning' | 'success' | 'info' | string;
+  time_label: string;
+  is_read: number;
+  timestamp: string;
+}
+
+export interface AppMessage {
+  id: number;
+  sender: string;
+  avatar: string;
+  message_content: string;
+  time_label: string;
+  is_unread: number;
+  timestamp: string;
+}

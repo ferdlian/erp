@@ -99,3 +99,23 @@ class User(Base):
     full_name = Column(String)
     role = Column(String) # ADMIN, FINANCE, INVENTORY, HR, SALES, MANAGER
     is_active = Column(Integer, default=1)
+
+class Notification(Base):
+    __tablename__ = "notifications"
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String)
+    message = Column(String)
+    type = Column(String) # alert, warning, success, info
+    time_label = Column(String) # e.g. "10 menit yang lalu"
+    is_read = Column(Integer, default=0) # 0 = false, 1 = true
+    timestamp = Column(String)
+
+class Message(Base):
+    __tablename__ = "messages"
+    id = Column(Integer, primary_key=True, index=True)
+    sender = Column(String)
+    avatar = Column(String)
+    message_content = Column(String)
+    time_label = Column(String)
+    is_unread = Column(Integer, default=1) # 1 = true, 0 = false
+    timestamp = Column(String)

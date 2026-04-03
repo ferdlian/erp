@@ -13,6 +13,7 @@ models.Base.metadata.create_all(bind=engine)
 # Initialize Admin on startup
 with SessionLocal() as db:
     crud.init_admin(db)
+    crud.init_topbar_mock_data(db)
 
 app = FastAPI(title="NexusERP API")
 
@@ -149,12 +150,27 @@ def read_invoices(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)
 def create_erp_invoice(invoice: schemas.InvoiceCreate, db: Session = Depends(get_db)):
     return crud.create_invoice(db=db, invoice=invoice)
 
+# TopBar (Notifications & Messages)
+@app.get("/notifications", response_model=List[schemas.Notification])
+def read_notifications(skip: int = 0, limit: int = 50, db: Session = Depends(get_db)):
+    return crud.get_notifications(db, skip=skip, limit=limit)
+
+@app.post("/notifications/read_all")
+def mark_notifications_read(db: Session = Depends(get_db)):
+    crud.mark_all_notifications_read(db)
+    return {"message": "All notifications marked as read"}
+
+@app.get("/messages", response_model=List[schemas.MessageSchema])
+def read_messages(skip: int = 0, limit: int = 50, db: Session = Depends(get_db)):
+    return crud.get_messages(db, skip=skip, limit=limit)
+
 # System Admin
 @app.post("/system/reset")
 def reset_erp_database(db: Session = Depends(get_db), current_user: models.User = Depends(auth.check_role("ADMIN"))):
     crud.reset_database(db)
     # Re-init admin after reset
     crud.init_admin(db)
+    crud.init_topbar_mock_data(db)
     return {"message": "Database cleared and admin re-initialized"}
 
 if __name__ == "__main__":

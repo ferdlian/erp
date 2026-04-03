@@ -164,3 +164,30 @@ class Token(BaseModel):
 
 class TokenData(BaseModel):
     username: Optional[str] = None
+
+# --- TopBar ---
+class NotificationBase(BaseModel):
+    title: str
+    message: str
+    type: str
+    time_label: str
+    is_read: int
+    timestamp: str
+
+class Notification(NotificationBase):
+    id: int
+    class Config:
+        orm_mode = True
+
+class MessageBase(BaseModel):
+    sender: str
+    avatar: str
+    message_content: str
+    time_label: str
+    is_unread: int
+    timestamp: str
+
+class MessageSchema(MessageBase):
+    id: int
+    class Config:
+        orm_mode = True

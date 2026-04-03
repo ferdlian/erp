@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { 
   FinanceOverview, InventoryOverview, HROverview, CRMOverview, SupplyChainOverview,
-  Transaction, Product, Employee, Deal, PurchaseOrder, Invoice
+  Transaction, Product, Employee, Deal, PurchaseOrder, Invoice, AppNotification, AppMessage
 } from './types';
 import { financeData } from './mock-data/finance';
 import { inventoryData } from './mock-data/inventory';
@@ -29,6 +29,12 @@ interface ERPStore {
   activity: typeof recentActivity;
   globalInsights: typeof globalInsights;
   moduleHealthScores: typeof moduleHealthScores;
+  
+  // TopBar State
+  notifications: AppNotification[];
+  messages: AppMessage[];
+  markAllNotificationsRead: () => Promise<void>;
+
   isLoading: boolean;
 
   // Global Actions
@@ -96,6 +102,8 @@ export const useERPStore = create<ERPStore>((set, get) => ({
   activity: recentActivity,
   globalInsights: globalInsights,
   moduleHealthScores: moduleHealthScores,
+  notifications: [],
+  messages: [],
   isLoading: false,
 
   initializeStore: async () => {
@@ -105,12 +113,14 @@ export const useERPStore = create<ERPStore>((set, get) => ({
     set({ isLoading: true });
     try {
       const headers = { 'Authorization': `Bearer ${token}` };
-      const [txRes, prodRes, empRes, dealRes, invRes] = await Promise.all([
+      const [txRes, prodRes, empRes, dealRes, invRes, notifRes, msgRes] = await Promise.all([
         fetch(`${API_BASE_URL}/finance/transactions`, { headers }),
         fetch(`${API_BASE_URL}/inventory/products`, { headers }),
         fetch(`${API_BASE_URL}/hr/employees`, { headers }),
         fetch(`${API_BASE_URL}/crm/deals`, { headers }),
         fetch(`${API_BASE_URL}/finance/invoices`, { headers }),
+        fetch(`${API_BASE_URL}/notifications`, { headers }),
+        fetch(`${API_BASE_URL}/messages`, { headers }),
       ]);
 
       const transactions = await txRes.json();
@@ -118,6 +128,9 @@ export const useERPStore = create<ERPStore>((set, get) => ({
       const employees = await empRes.json();
       const deals = await dealRes.json();
       const invoices = await invRes.json();
+      
+      const notifications = await notifRes.json();
+      const messages = await msgRes.json();
 
       set((state) => {
         // Calculate finance metrics
@@ -163,6 +176,8 @@ export const useERPStore = create<ERPStore>((set, get) => ({
             pipelineValue: deals.reduce((acc: number, d: any) => acc + d.value, 0),
             deals: deals.map((d: any) => ({ ...d, id: String(d.id), expectedClose: d.expected_close })),
           },
+          notifications: notifications,
+          messages: messages,
           isLoading: false
         };
       });
@@ -387,6 +402,26 @@ export const useERPStore = create<ERPStore>((set, get) => ({
       console.error("Gagal reset database:", error);
     }
     return false;
+  },
+
+  // TopBar
+  markAllNotificationsRead: async () => {
+    const token = get().token;
+    if (!token) return;
+    
+    // Optimistic UI Update
+    set((state) => ({
+      notifications: state.notifications.map(n => ({ ...n, is_read: 1 }))
+    }));
+
+    try {
+      await fetch(`${API_BASE_URL}/notifications/read_all`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+    } catch (e) {
+      console.error("Failed to mark notifications. Refresh page.");
+    }
   },
 
   // Global Sync
