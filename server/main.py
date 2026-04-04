@@ -1,5 +1,6 @@
 from fastapi import FastAPI, Depends, HTTPException, status
 from sqlalchemy.orm import Session
+from sqlalchemy import text
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordRequestForm
 from typing import List
@@ -7,8 +8,48 @@ from typing import List
 import crud, models, schemas, auth
 from database import SessionLocal, engine, get_db
 
+def _ensure_column(conn, table_name: str, column_name: str, ddl: str):
+    rows = conn.execute(text(f"PRAGMA table_info({table_name})")).fetchall()
+    existing_columns = {row[1] for row in rows}
+    if column_name not in existing_columns:
+        conn.execute(text(ddl))
+
+def run_startup_migrations():
+    with engine.begin() as conn:
+        _ensure_column(
+            conn,
+            "workflows",
+            "status",
+            "ALTER TABLE workflows ADD COLUMN status TEXT NOT NULL DEFAULT 'draft'",
+        )
+        _ensure_column(
+            conn,
+            "workflows",
+            "active_version_id",
+            "ALTER TABLE workflows ADD COLUMN active_version_id INTEGER",
+        )
+        _ensure_column(
+            conn,
+            "workflows",
+            "created_at",
+            "ALTER TABLE workflows ADD COLUMN created_at TEXT",
+        )
+        _ensure_column(
+            conn,
+            "workflows",
+            "updated_at",
+            "ALTER TABLE workflows ADD COLUMN updated_at TEXT",
+        )
+        _ensure_column(
+            conn,
+            "workflow_nodes",
+            "config",
+            "ALTER TABLE workflow_nodes ADD COLUMN config JSON",
+        )
+
 # Create database tables
 models.Base.metadata.create_all(bind=engine)
+run_startup_migrations()
 
 # Initialize Admin on startup
 with SessionLocal() as db:
@@ -104,16 +145,51 @@ def delete_hr_employee(employee_id: int, db: Session = Depends(get_db)):
 
 # Workflows
 @app.get("/workflows", response_model=List[schemas.Workflow])
-def read_workflows(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
-    return crud.get_workflows(db, skip=skip, limit=limit)
+def read_workflows(
+    skip: int = 0,
+    limit: int = 100,
+    include_archived: bool = False,
+    db: Session = Depends(get_db),
+):
+    return crud.get_workflows(db, skip=skip, limit=limit, include_archived=include_archived)
 
 @app.post("/workflows", response_model=schemas.Workflow)
 def create_erp_workflow(workflow: schemas.WorkflowCreate, db: Session = Depends(get_db)):
-    return crud.create_workflow(db=db, workflow=workflow)
+    try:
+        return crud.create_workflow(db=db, workflow=workflow)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 @app.put("/workflows/{workflow_id}", response_model=schemas.Workflow)
 def update_erp_workflow(workflow_id: int, workflow: schemas.WorkflowCreate, db: Session = Depends(get_db)):
-    db_workflow = crud.update_workflow(db, workflow_id=workflow_id, workflow=workflow)
+    try:
+        db_workflow = crud.update_workflow(db, workflow_id=workflow_id, workflow=workflow)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if db_workflow is None:
+        raise HTTPException(status_code=404, detail="Workflow not found")
+    return db_workflow
+
+@app.post("/workflows/{workflow_id}/publish", response_model=schemas.Workflow)
+def publish_erp_workflow(workflow_id: int, db: Session = Depends(get_db)):
+    try:
+        db_workflow = crud.publish_workflow(db, workflow_id=workflow_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if db_workflow is None:
+        raise HTTPException(status_code=404, detail="Workflow not found")
+    return db_workflow
+
+@app.post("/workflows/{workflow_id}/archive", response_model=schemas.Workflow)
+def archive_erp_workflow(workflow_id: int, db: Session = Depends(get_db)):
+    db_workflow = crud.archive_workflow(db, workflow_id=workflow_id)
+    if db_workflow is None:
+        raise HTTPException(status_code=404, detail="Workflow not found")
+    return db_workflow
+
+@app.post("/workflows/{workflow_id}/duplicate", response_model=schemas.Workflow)
+def duplicate_erp_workflow(workflow_id: int, db: Session = Depends(get_db)):
+    db_workflow = crud.duplicate_workflow(db, workflow_id=workflow_id)
     if db_workflow is None:
         raise HTTPException(status_code=404, detail="Workflow not found")
     return db_workflow

@@ -1,7 +1,6 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, JSON
+from sqlalchemy import Column, Integer, String, Float, ForeignKey, JSON
 from sqlalchemy.orm import relationship
 from database import Base
-import datetime
 
 class Transaction(Base):
     __tablename__ = "transactions"
@@ -67,8 +66,30 @@ class Workflow(Base):
     name = Column(String, index=True)
     description = Column(String)
     is_active = Column(Integer, default=1) # 1=active, 0=inactive
+    status = Column(String, default="draft", nullable=False)
+    created_at = Column(String, nullable=True)
+    updated_at = Column(String, nullable=True)
+    active_version_id = Column(Integer, ForeignKey("workflow_versions.id"), nullable=True)
     nodes = relationship("WorkflowNode", back_populates="workflow", cascade="all, delete-orphan")
     edges = relationship("WorkflowEdge", back_populates="workflow", cascade="all, delete-orphan")
+    versions = relationship(
+        "WorkflowVersion",
+        back_populates="workflow",
+        cascade="all, delete-orphan",
+        foreign_keys="WorkflowVersion.workflow_id",
+    )
+    active_version = relationship("WorkflowVersion", foreign_keys=[active_version_id], post_update=True)
+
+class WorkflowVersion(Base):
+    __tablename__ = "workflow_versions"
+    id = Column(Integer, primary_key=True, index=True)
+    workflow_id = Column(Integer, ForeignKey("workflows.id"), index=True)
+    version_number = Column(Integer, nullable=False)
+    is_active = Column(Integer, default=0) # 1=active, 0=inactive
+    definition_json = Column(JSON, nullable=False)
+    published_at = Column(String, nullable=True)
+    created_at = Column(String, nullable=False)
+    workflow = relationship("Workflow", back_populates="versions", foreign_keys=[workflow_id])
 
 class WorkflowNode(Base):
     __tablename__ = "workflow_nodes"
@@ -78,6 +99,7 @@ class WorkflowNode(Base):
     type = Column(String)
     position = Column(JSON) # {x: 0, y: 0}
     data = Column(JSON)
+    config = Column(JSON, nullable=True)
     workflow = relationship("Workflow", back_populates="nodes")
 
 class WorkflowEdge(Base):

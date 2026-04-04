@@ -1,6 +1,13 @@
 from sqlalchemy.orm import Session
+import datetime
 import models, schemas
 import auth
+
+WORKFLOW_STATUSES = {"draft", "published", "archived"}
+
+
+def _utc_now_iso() -> str:
+    return datetime.datetime.utcnow().isoformat()
 
 # --- User Auth CRUD ---
 def get_user_by_username(db: Session, username: str):
@@ -99,18 +106,33 @@ def delete_employee(db: Session, employee_id: int):
     return db_employee
 
 # Workflows
-def get_workflows(db: Session, skip: int = 0, limit: int = 100):
-    return db.query(models.Workflow).offset(skip).limit(limit).all()
+def get_workflows(db: Session, skip: int = 0, limit: int = 100, include_archived: bool = False):
+    query = db.query(models.Workflow)
+    if not include_archived:
+        query = query.filter(models.Workflow.status != "archived")
+    return query.order_by(models.Workflow.id).offset(skip).limit(limit).all()
 
 def get_workflow(db: Session, workflow_id: int):
     return db.query(models.Workflow).filter(models.Workflow.id == workflow_id).first()
 
 def create_workflow(db: Session, workflow: schemas.WorkflowCreate):
+    status = (workflow.status or "draft").lower()
+    if status not in WORKFLOW_STATUSES:
+        raise ValueError("Invalid workflow status")
+
+    now_iso = _utc_now_iso()
+
+    # New workflow must start as draft.
+    status = "draft"
+
     # Create the main workflow record
     db_workflow = models.Workflow(
         name=workflow.name,
         description=workflow.description,
-        is_active=workflow.is_active
+        is_active=workflow.is_active,
+        status=status,
+        created_at=now_iso,
+        updated_at=now_iso,
     )
     db.add(db_workflow)
     db.commit()
@@ -141,12 +163,23 @@ def update_workflow(db: Session, workflow_id: int, workflow: schemas.WorkflowCre
     db_workflow = db.query(models.Workflow).filter(models.Workflow.id == workflow_id).first()
     if not db_workflow:
         return None
-    
+
+    if db_workflow.status == "published":
+        raise ValueError("Published workflow cannot be edited directly")
+
+    next_status = (workflow.status or db_workflow.status or "draft").lower()
+    if next_status not in WORKFLOW_STATUSES:
+        raise ValueError("Invalid workflow status")
+    if next_status == "published":
+        raise ValueError("Use publish endpoint to publish workflow")
+
     # Update main info
     db_workflow.name = workflow.name
     db_workflow.description = workflow.description
     db_workflow.is_active = workflow.is_active
-    
+    db_workflow.status = next_status
+    db_workflow.updated_at = _utc_now_iso()
+
     # Clear old nodes and edges (Cascade delete-orphan should handle this)
     # We clear the collections to trigger the deletion in SQLAlchemy
     db_workflow.nodes = []
@@ -166,6 +199,127 @@ def update_workflow(db: Session, workflow_id: int, workflow: schemas.WorkflowCre
     db.commit()
     db.refresh(db_workflow)
     return db_workflow
+
+def publish_workflow(db: Session, workflow_id: int):
+    db_workflow = db.query(models.Workflow).filter(models.Workflow.id == workflow_id).first()
+    if not db_workflow:
+        return None
+    if db_workflow.status == "archived":
+        raise ValueError("Archived workflow cannot be published")
+
+    now_iso = _utc_now_iso()
+    current_version = (
+        db.query(models.WorkflowVersion)
+        .filter(models.WorkflowVersion.workflow_id == workflow_id)
+        .order_by(models.WorkflowVersion.version_number.desc())
+        .first()
+    )
+    next_version = (current_version.version_number + 1) if current_version else 1
+
+    for version in db_workflow.versions:
+        version.is_active = 0
+
+    snapshot = {
+        "workflow_id": db_workflow.id,
+        "name": db_workflow.name,
+        "description": db_workflow.description,
+        "is_active": db_workflow.is_active,
+        "status": "published",
+        "nodes": [
+            {
+                "node_id": node.node_id,
+                "type": node.type,
+                "position": node.position,
+                "data": node.data,
+                "config": node.config or {},
+            }
+            for node in db_workflow.nodes
+        ],
+        "edges": [
+            {
+                "edge_id": edge.edge_id,
+                "source": edge.source,
+                "target": edge.target,
+                "animated": edge.animated,
+                "style": edge.style,
+            }
+            for edge in db_workflow.edges
+        ],
+    }
+
+    version = models.WorkflowVersion(
+        workflow_id=workflow_id,
+        version_number=next_version,
+        is_active=1,
+        definition_json=snapshot,
+        published_at=now_iso,
+        created_at=now_iso,
+    )
+    db.add(version)
+    db.flush()
+
+    db_workflow.status = "published"
+    db_workflow.active_version_id = version.id
+    db_workflow.updated_at = now_iso
+    db.commit()
+    db.refresh(db_workflow)
+    return db_workflow
+
+def archive_workflow(db: Session, workflow_id: int):
+    db_workflow = db.query(models.Workflow).filter(models.Workflow.id == workflow_id).first()
+    if not db_workflow:
+        return None
+    db_workflow.status = "archived"
+    db_workflow.updated_at = _utc_now_iso()
+    db.commit()
+    db.refresh(db_workflow)
+    return db_workflow
+
+
+def duplicate_workflow(db: Session, workflow_id: int):
+    source_workflow = db.query(models.Workflow).filter(models.Workflow.id == workflow_id).first()
+    if not source_workflow:
+        return None
+
+    now_iso = _utc_now_iso()
+    cloned = models.Workflow(
+        name=f"{source_workflow.name} (Copy)",
+        description=source_workflow.description,
+        is_active=source_workflow.is_active,
+        status="draft",
+        created_at=now_iso,
+        updated_at=now_iso,
+    )
+    db.add(cloned)
+    db.flush()
+
+    for node in source_workflow.nodes:
+        db.add(
+            models.WorkflowNode(
+                node_id=node.node_id,
+                workflow_id=cloned.id,
+                type=node.type,
+                position=node.position,
+                data=node.data,
+                config=node.config,
+            )
+        )
+
+    for edge in source_workflow.edges:
+        db.add(
+            models.WorkflowEdge(
+                edge_id=edge.edge_id,
+                workflow_id=cloned.id,
+                source=edge.source,
+                target=edge.target,
+                animated=edge.animated,
+                style=edge.style,
+            )
+        )
+
+    db.commit()
+    db.refresh(cloned)
+    return cloned
 
 # Deals
 def get_deals(db: Session, skip: int = 0, limit: int = 100):
@@ -205,6 +359,7 @@ def reset_database(db: Session):
     db.query(models.Deal).delete()
     db.query(models.WorkflowNode).delete()
     db.query(models.WorkflowEdge).delete()
+    db.query(models.WorkflowVersion).delete()
     db.query(models.Workflow).delete()
     # Also delete notifications and messages if full reset is wanted
     db.query(models.Notification).delete()
