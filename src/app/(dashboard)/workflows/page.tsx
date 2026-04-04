@@ -17,16 +17,20 @@ import {
 import '@xyflow/react/dist/style.css';
 import {
   Plus, Play, Save, Trash2, MousePointer2, Loader2, Upload, Archive,
-  Zap, Sparkles, Settings, Share2, Activity, X, Menu, Search
+  Zap, Sparkles, Settings, Share2, Activity, X, Menu, Search, ShieldCheck, Flag
 } from 'lucide-react';
-import { TriggerNode, ActionNode, AINode } from '@/components/workflow/CustomNodes';
+import { TriggerNode, ActionNode, AINode, ConditionNode, ApprovalNode, EndNode } from '@/components/workflow/CustomNodes';
 
 const API_BASE_URL = 'http://localhost:8000';
 
 const nodeTypes = {
   trigger: TriggerNode,
+  task: ActionNode,
   action: ActionNode,
   ai: AINode,
+  condition: ConditionNode,
+  approval: ApprovalNode,
+  end: EndNode,
 };
 
 type WorkflowStatus = 'draft' | 'published' | 'archived';
@@ -71,6 +75,14 @@ type PersistedWorkflow = {
   edges: PersistedWorkflowEdge[];
 };
 
+const ERP_MODULE_OPTIONS = [
+  { value: 'finance', label: 'Finance' },
+  { value: 'inventory', label: 'Inventory' },
+  { value: 'hr', label: 'HR' },
+  { value: 'crm', label: 'CRM' },
+  { value: 'supply-chain', label: 'Supply Chain' },
+];
+
 const initialNodes: Node<WorkflowNodeData>[] = [
   {
     id: '1',
@@ -79,27 +91,37 @@ const initialNodes: Node<WorkflowNodeData>[] = [
     data: {
       label: 'Stok Hampir Habis',
       description: 'Temicu saat stok produk di bawah batas minimal (Threshold).',
-      config: { event_name: 'inventory.stock.low' },
+      config: { event_name: 'inventory.product.changed' },
     },
   },
   {
     id: '2',
-    type: 'ai',
+    type: 'task',
     position: { x: 350, y: 100 },
     data: {
-      label: 'Analisis Prediksi AI',
-      description: 'Menghitung sisa waktu distribusi berdasarkan tren permintaan.',
-      config: { model: 'nexus-forecast-v1' },
+      label: 'Buat PO Draft',
+      description: 'Buat draft purchase order.',
+      config: { action_type: 'purchase_order.create', module: 'inventory', module_mention: '@inventory' },
     },
   },
   {
     id: '3',
-    type: 'action',
+    type: 'approval',
     position: { x: 650, y: 150 },
     data: {
-      label: 'Buat PO Otomatis',
-      description: 'Membuat draf pesanan pembelian ke pemasok utama.',
-      config: { action_type: 'purchase_order.create' },
+      label: 'Approval Manager',
+      description: 'Menunggu persetujuan manager.',
+      config: { approval_type: 'role', role: 'MANAGER' },
+    },
+  },
+  {
+    id: '4',
+    type: 'end',
+    position: { x: 950, y: 150 },
+    data: {
+      label: 'Selesai',
+      description: 'Workflow selesai.',
+      config: {},
     },
   },
 ];
@@ -107,6 +129,7 @@ const initialNodes: Node<WorkflowNodeData>[] = [
 const initialEdges: Edge[] = [
   { id: 'e1-2', source: '1', target: '2', animated: true, style: { stroke: '#6366f1' } },
   { id: 'e2-3', source: '2', target: '3', animated: true, style: { stroke: '#10b981' } },
+  { id: 'e3-4', source: '3', target: '4', animated: true, style: { stroke: '#f43f5e' } },
 ];
 
 export default function WorkflowPage() {
@@ -409,14 +432,39 @@ export default function WorkflowPage() {
     }
 
     const id = Date.now().toString();
+    const defaults: Record<string, { label: string; description: string; config: Record<string, unknown> }> = {
+      trigger: { label: 'Pemicu Baru', description: 'Node awal workflow.', config: { event_name: 'inventory.product.changed' } },
+      task: {
+        label: 'Notifikasi Stok Rendah',
+        description: 'Stok {{product_name}} tersisa {{stock}} unit (min {{min_stock}}).',
+        config: {
+          action_type: 'notification.create',
+          module: 'inventory',
+          module_mention: '@inventory',
+          when: { field: 'stock', operator: '<', value: 10 },
+          notification: {
+            title: '{{node_label}}',
+            message_template: '{{node_description}}',
+            type: 'warning',
+          },
+          threshold: 10,
+        },
+      },
+      ai: { label: 'Logika AI Baru', description: 'Pemrosesan cerdas berbasis AI.', config: {} },
+      action: { label: 'Aksi Baru', description: 'Eksekusi action ke sistem.', config: { action_type: 'generic.action' } },
+      condition: { label: 'Kondisi Baru', description: 'Percabangan true/false berdasarkan payload.', config: { field: 'amount', operator: '>', value: 5000000 } },
+      approval: { label: 'Approval Baru', description: 'Menunggu keputusan approve/reject.', config: { approval_type: 'role', role: 'MANAGER' } },
+      end: { label: 'Selesai', description: 'Node akhir workflow.', config: {} },
+    };
+    const nodeDefault = defaults[type] ?? defaults.action;
     const newNode = {
       id,
       type,
       position: { x: 100, y: 100 },
       data: {
-        label: type === 'trigger' ? 'Pemicu Baru' : type === 'ai' ? 'Logika AI Baru' : 'Aksi Baru',
-        description: 'Buka panel kanan untuk mengedit deskripsi.',
-        config: {},
+        label: nodeDefault.label,
+        description: nodeDefault.description,
+        config: nodeDefault.config,
       },
     };
     setNodes((nds) => nds.concat(newNode));
@@ -461,6 +509,8 @@ export default function WorkflowPage() {
 
   const currentNode = nodes.find((n) => n.id === selectedNodeId);
   const isPublished = workflowStatus === 'published';
+  const currentNodeType = (currentNode?.type || '').toLowerCase();
+  const isTaskNode = currentNodeType === 'task' || currentNodeType === 'action';
   const selectedWorkflow = workflows.find((item) => item.id === currentWorkflowId);
   const activeVersion = selectedWorkflow?.versions?.find((version) => version.is_active === 1)?.version_number;
   const filteredWorkflows = workflows.filter((workflow) =>
@@ -489,6 +539,18 @@ export default function WorkflowPage() {
     } catch {
       alert('Format config JSON tidak valid.');
     }
+  };
+
+  const updateCurrentTaskConfig = (partial: Record<string, unknown>) => {
+    if (!currentNode || !isTaskNode || isPublished) {
+      return;
+    }
+    const config = ((currentNode.data as WorkflowNodeData).config ?? {}) as Record<string, unknown>;
+    const merged = { ...config, ...partial };
+    if (typeof merged.module === 'string' && merged.module.length > 0) {
+      merged.module_mention = `@${merged.module}`;
+    }
+    updateNodeData(currentNode.id, { config: merged });
   };
 
   return (
@@ -670,8 +732,9 @@ export default function WorkflowPage() {
             <div className="space-y-3">
               {[
                 { type: 'trigger', label: 'Pemicu', color: 'amber', icon: Zap, desc: 'Event pemicu sistem' },
-                { type: 'ai', label: 'Logika AI', color: 'indigo', icon: Sparkles, desc: 'Pemrosesan cerdas' },
-                { type: 'action', label: 'Aksi', color: 'emerald', icon: Settings, desc: 'Eksekusi perintah' },
+                { type: 'task', label: 'Task', color: 'emerald', icon: Settings, desc: 'Langkah proses/aksi' },
+                { type: 'approval', label: 'Approval', color: 'orange', icon: ShieldCheck, desc: 'Menunggu persetujuan' },
+                { type: 'end', label: 'End', color: 'rose', icon: Flag, desc: 'Akhir workflow' },
               ].map((item) => (
                 <button
                   key={item.type}
@@ -775,6 +838,43 @@ export default function WorkflowPage() {
                     placeholder="Tentukan apa yang harus dilakukan node ini..."
                   />
                 </div>
+
+                {isTaskNode ? (
+                  <div className="space-y-3 p-3 rounded-xl bg-emerald-500/5 border border-emerald-500/10">
+                    <p className="text-[10px] font-bold text-emerald-400 uppercase tracking-widest">Task Mapping</p>
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block">Modul ERP</label>
+                      <select
+                        disabled={isPublished}
+                        value={String((((currentNode.data as WorkflowNodeData).config ?? {}) as Record<string, unknown>).module ?? '')}
+                        onChange={(e) => updateCurrentTaskConfig({ module: e.target.value })}
+                        className="w-full bg-slate-900 border border-white/10 rounded-xl h-11 px-3 text-xs text-slate-100 focus:outline-none focus:border-emerald-500/50"
+                        style={{ backgroundColor: '#0f172a', color: '#e2e8f0' }}
+                      >
+                        <option value="" style={{ backgroundColor: '#0f172a', color: '#94a3b8' }}>Pilih modul</option>
+                        {ERP_MODULE_OPTIONS.map((opt) => (
+                          <option
+                            key={opt.value}
+                            value={opt.value}
+                            style={{ backgroundColor: '#0f172a', color: '#e2e8f0' }}
+                          >
+                            {opt.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block">Action Key</label>
+                      <input
+                        disabled={isPublished}
+                        value={String((((currentNode.data as WorkflowNodeData).config ?? {}) as Record<string, unknown>).action_type ?? '')}
+                        onChange={(e) => updateCurrentTaskConfig({ action_type: e.target.value })}
+                        className="w-full bg-white/5 border border-white/10 rounded-xl h-11 px-3 text-xs text-white focus:outline-none focus:border-emerald-500/50"
+                        placeholder="contoh: invoice.create"
+                      />
+                    </div>
+                  </div>
+                ) : null}
 
                 <div className="space-y-2">
                   <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block">Config (JSON)</label>

@@ -113,6 +113,43 @@ class WorkflowEdge(Base):
     style = Column(JSON, nullable=True)
     workflow = relationship("Workflow", back_populates="edges")
 
+class WorkflowRun(Base):
+    __tablename__ = "workflow_runs"
+    id = Column(Integer, primary_key=True, index=True)
+    workflow_id = Column(Integer, ForeignKey("workflows.id"), index=True, nullable=False)
+    workflow_version_id = Column(Integer, ForeignKey("workflow_versions.id"), index=True, nullable=False)
+    trigger_event = Column(String, nullable=False)
+    status = Column(String, nullable=False, default="running")  # running, waiting_approval, completed, failed, rejected
+    current_node_id = Column(String, nullable=True)
+    context_json = Column(JSON, nullable=True)
+    started_at = Column(String, nullable=False)
+    finished_at = Column(String, nullable=True)
+
+class WorkflowRunLog(Base):
+    __tablename__ = "workflow_run_logs"
+    id = Column(Integer, primary_key=True, index=True)
+    run_id = Column(Integer, ForeignKey("workflow_runs.id"), index=True, nullable=False)
+    workflow_id = Column(Integer, ForeignKey("workflows.id"), index=True, nullable=False)
+    node_id = Column(String, nullable=True)
+    node_type = Column(String, nullable=True)
+    level = Column(String, nullable=False, default="info")
+    message = Column(String, nullable=False)
+    log_data = Column(JSON, nullable=True)
+    created_at = Column(String, nullable=False)
+
+class WorkflowApproval(Base):
+    __tablename__ = "workflow_approvals"
+    id = Column(Integer, primary_key=True, index=True)
+    run_id = Column(Integer, ForeignKey("workflow_runs.id"), index=True, nullable=False)
+    workflow_id = Column(Integer, ForeignKey("workflows.id"), index=True, nullable=False)
+    node_id = Column(String, nullable=False)
+    status = Column(String, nullable=False, default="pending")  # pending, approved, rejected
+    requested_at = Column(String, nullable=False)
+    acted_at = Column(String, nullable=True)
+    acted_by = Column(String, nullable=True)
+    comment = Column(String, nullable=True)
+    decision_payload = Column(JSON, nullable=True)
+
 class User(Base):
     __tablename__ = "users"
     id = Column(Integer, primary_key=True, index=True)

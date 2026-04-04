@@ -1,23 +1,86 @@
 # Modul: Otomatisasi Alur Kerja (Workflow)
 
 ## Deskripsi Fitur
-Modul interaktif dengan kanvas drag-and-drop untuk merancang logika bisnis visual. Didukung oleh React Flow di frontend, dan manajemen data JSON atomik di backend SQLite.
+Modul ini menyediakan workflow builder + runtime engine berbasis event.
+
+Tujuan utamanya:
+- menyusun alur bisnis secara visual,
+- publish versi workflow yang immutable,
+- mengeksekusi workflow dari event sistem,
+- mencatat run, log, dan approval untuk audit.
 
 ## Arsitektur Teknis
 - **Backend**:
-  - `server/main.py`: Rute `/workflows` (GET, POST, PUT, DELETE).
-  - `server/models.py`: Relasi one-to-many. `Workflow` memiliki daftar `WorkflowNode` dan `WorkflowEdge`. Data struktur disimpan bertipe `JSON`.
-  - `server/crud.py`: Penyimpanan data dan pembaharuan graf. Endpoint `PUT /workflows/{id}` menghapus relasi node & edge lama dan menyisipkan representasi baru secara transaksional (`cascade delete`).
+  - `server/main.py`: endpoint authoring, lifecycle, runtime, approvals.
+  - `server/models.py`: definisi `workflows`, `workflow_versions`, `workflow_runs`, `workflow_run_logs`, `workflow_approvals`.
+  - `server/crud.py`: CRUD workflow + engine eksekusi runtime.
 - **Frontend**:
-  - `src/app/(dashboard)/workflows/page.tsx`: Layout utama 3-kolom (Toolbar Kiri, Canvas Tengah, Inspector Kanan).
-  - `src/components/workflow/CustomNodes.tsx`: Desain visual Custom Nodes (Trigger, Aksi, AI) terintegrasi dengan style `neon-outline` (status selected).
-  - Menggunakan library `reactflow` untuk rendering nodes di virtual viewport.
+  - `src/app/(dashboard)/workflows/page.tsx`: builder UI (list workflow, canvas, inspector).
+  - `src/components/workflow/CustomNodes.tsx`: visual custom nodes.
 
-## Interaksi UI
-1. **Drag-and-Drop**: Pengguna dapat menambahkan titik ke dalam graf.
-2. **Live Editing**: Mengklik node menampilkan *Inspector Panel* untuk mengubah _label_ dan konfigurasi metadata seketika.
-3. **Save/Update Logic**: Sistem dapat membedakan data baru (dikirim via POST) dan data lama (via PUT) melalui evaluasi state *workflow_id*.
+## Node Library (Mode Sederhana)
+Library default disederhanakan jadi 4 node inti:
+- `trigger`
+- `task`
+- `approval`
+- `end`
+
+Kompatibilitas tetap dijaga untuk workflow lama (`action`, `ai`, `condition`).
+
+## Konfigurasi Node
+### Trigger
+Contoh config trigger:
+```json
+{
+  "event_name": "inventory.product.changed"
+}
+```
+
+### Task
+Task bersifat **config-driven** lintas modul (tidak hardcode per modul).
+
+Contoh config task notifikasi stok rendah:
+```json
+{
+  "action_type": "inventory.notification.create",
+  "module": "inventory",
+  "module_mention": "@inventory",
+  "when": {
+    "field": "stock",
+    "operator": "<",
+    "value": 10
+  },
+  "notification": {
+    "title": "Stok Kritis",
+    "message_template": "{{product_name}} tersisa {{stock}} unit (min {{min_stock}}).",
+    "type": "warning"
+  }
+}
+```
+
+Catatan:
+- `action_type` didukung dalam bentuk:
+  - `notification.create`
+  - `<module>.notification.create` (contoh: `inventory.notification.create`, `finance.notification.create`)
+- Jika `notification.title` / `notification.message_template` tidak diisi, engine memakai default dari `label` / `description` node task.
+
+## Runtime API Ringkas
+- Trigger event manual: `POST /workflows/events`
+- List run: `GET /workflows/runs`
+- Detail run: `GET /workflows/runs/{run_id}`
+- Log run: `GET /workflows/runs/{run_id}/logs`
+- Pending approval: `GET /workflows/approvals/pending`
+- Approve run: `POST /workflows/runs/{run_id}/approve`
+- Reject run: `POST /workflows/runs/{run_id}/reject`
+
+## Event dari Sistem (Otomatis)
+Saat ini modul inventory sudah mengirim event domain otomatis ketika data produk berubah:
+- `event_name`: `inventory.product.changed`
+- terjadi saat create/update produk.
+
+Dengan ini, workflow bisa berjalan tanpa curl/postman, selama trigger workflow memakai event yang sama.
 
 ## Panduan Penerusan (Engineer Selanjutnya)
-1. **Engine Eksekusi Backend**: Saat ini hanya menyimpan struktur _flow_. Engine *execution* (yang membaca struktur JSON dan benar-benar mengeksekusinya terhadap API riil dan rule base logic) masih harus dikembangkan (contoh: mengadopsi _Celery_ atau engine workflow lainnya).
-2. **Validasi Graf**: Buat validasi (mencegah perulangan tiada henti, *dangling edges*) sebelum disimpan.
+1. Tambah emitter event generik lintas modul (`finance`, `hr`, `crm`, dll.) dengan pola domain event yang konsisten.
+2. Tambah validasi graph yang lebih ketat (orphan node, branch wajib, dsb).
+3. Tambah action executor nyata (integrasi ke service ERP riil), bukan hanya notification.
