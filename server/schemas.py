@@ -161,6 +161,61 @@ class Workflow(WorkflowBase):
     class Config:
         orm_mode = True
 
+class WorkflowEventTriggerRequest(BaseModel):
+    event_name: str
+    payload: Optional[Dict[str, Any]] = {}
+
+class WorkflowApprovalActionRequest(BaseModel):
+    acted_by: Optional[str] = None
+    comment: Optional[str] = None
+    payload: Optional[Dict[str, Any]] = None
+
+class WorkflowRunBase(BaseModel):
+    workflow_id: int
+    workflow_version_id: int
+    trigger_event: str
+    status: str
+    current_node_id: Optional[str] = None
+    context_json: Optional[Dict[str, Any]] = None
+    started_at: str
+    finished_at: Optional[str] = None
+
+class WorkflowRun(WorkflowRunBase):
+    id: int
+    class Config:
+        from_attributes = True
+
+class WorkflowRunLogBase(BaseModel):
+    run_id: int
+    workflow_id: int
+    node_id: Optional[str] = None
+    node_type: Optional[str] = None
+    level: str
+    message: str
+    log_data: Optional[Dict[str, Any]] = None
+    created_at: str
+
+class WorkflowRunLog(WorkflowRunLogBase):
+    id: int
+    class Config:
+        from_attributes = True
+
+class WorkflowApprovalBase(BaseModel):
+    run_id: int
+    workflow_id: int
+    node_id: str
+    status: str
+    requested_at: str
+    acted_at: Optional[str] = None
+    acted_by: Optional[str] = None
+    comment: Optional[str] = None
+    decision_payload: Optional[Dict[str, Any]] = None
+
+class WorkflowApproval(WorkflowApprovalBase):
+    id: int
+    class Config:
+        from_attributes = True
+
 # --- Auth Schemas ---
 class UserBase(BaseModel):
     username: str

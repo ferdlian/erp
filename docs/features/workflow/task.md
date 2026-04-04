@@ -1,108 +1,95 @@
 # Checklist & History Tugas: Workflow Engine Upgrade (ERP Ready)
 
-## 🎯 Tujuan
-Mengembangkan Workflow Dashboard saat ini (visual builder) menjadi **Workflow Engine berbasis event** yang dapat:
-- menjalankan alur workflow
-- mendukung approval ERP
-- memiliki audit log
-- scalable & modular
+## Tujuan
+Mengembangkan workflow builder menjadi workflow engine berbasis event yang:
+- dapat menjalankan alur bisnis,
+- mendukung approval,
+- memiliki audit log,
+- mudah dikembangkan lintas modul.
 
 ---
 
-# ✅ Riwayat Penyelesaian (Selesai)
-- [x] Integrasi React Flow v11
-- [x] Pembuatan kanvas drag-and-drop berbasis mock
-- [x] Translasi mock state → persistent state dari API
-- [x] Sinkronisasi `nodes` & `edges` (ReactFlow ↔ SQLAlchemy)
-- [x] Inspector Panel (edit label & description)
-- [x] Split HTTP POST (Create) & PUT (Update)
-- [x] UI enhancement (neon glow interaction)
-- [x] Reset state workflow
-- [x] Hapus node + edge terkait dari Inspector
-
-📌 Status saat ini:
-> ✔ Workflow Builder (Authoring Tool)  
-> ❌ Belum Workflow Engine (Execution System)
+## Status Saat Ini
+- ? Workflow Builder (Authoring Tool)
+- ? Workflow Engine Runtime Dasar (Event Trigger, Run, Log, Approval)
 
 ---
 
-# 🚧 Rencana Pengembangan (Backlog)
+## PHASE 1 � Workflow Definition Layer
 
-## 🔹 PHASE 1 — Workflow Definition Layer (WAJIB)
+### 1. Workflow Status & Lifecycle
+- [x] Tambah status `draft`, `published`, `archived`
+- [x] Workflow baru default `draft`
+- [x] Publish membuat versi aktif
+- [x] Archive workflow tanpa hapus histori
+- [x] Publish ulang dari archived diperbolehkan
 
-### 🧩 1. Workflow Status & Lifecycle
-- [x] Tambahkan field `status`:
-  - `draft`
-  - `published`
-  - `archived`
+### 2. Workflow Versioning
+- [x] Tabel `workflow_versions`
+- [x] Snapshot nodes + edges saat publish
+- [x] Runtime memakai active version, bukan draft
 
-**Acceptance:**
-- Workflow baru = `draft`
-- Workflow `published` tidak bisa diedit langsung
+### 3. Node Config
+- [x] Semua node menyimpan `config`
+- [x] Editor menyediakan input JSON config
 
----
+### 4. Multi-Workflow Management
+- [x] Buat banyak workflow
+- [x] Workflow list dengan status dan versi aktif
+- [x] Pilih workflow aktif untuk diedit
+- [x] Duplikasi workflow
+- [x] Archive workflow
+- [x] Delete workflow
+- [x] Search workflow list
+- [x] Sidebar list bisa open/close
 
-### 🧩 2. Workflow Versioning
-- [x] Buat tabel `workflow_versions`
-- [x] Saat publish -> snapshot nodes + edges
-
-**Acceptance:**
-- Workflow punya versi aktif
-- Versi lama tetap tersimpan
-- Runtime tidak menggunakan draft
-
----
-
-### 🧩 3. Node Config (WAJIB)
-- [x] Tambahkan field `config` pada node
-
-Contoh:
-```json
-{
-  "type": "condition",
-  "config": {
-    "field": "amount",
-    "operator": ">",
-    "value": 5000000
-  }
-}
-```
-
-**Acceptance:**
-- Semua node menyimpan `config` sesuai tipenya
-- Backend menolak publish jika `config` wajib belum lengkap
+### 4.1. Penyederhanaan Node Builder (UX)
+- [x] Node library disederhanakan menjadi 4 node inti:
+  - `trigger`
+  - `task`
+  - `approval`
+  - `end`
+- [x] Tetap kompatibel dengan node legacy (`action`, `ai`, `condition`)
 
 ---
 
-### 🧩 4. Multi-Workflow Management (WAJIB)
-- [ ] User bisa membuat **lebih dari satu workflow**
-- [ ] Tambahkan daftar workflow (list view) dengan informasi:
-  - `name`
-  - `status`
-  - `active_version`
-  - `updated_at`
-- [ ] User bisa pilih workflow aktif untuk diedit di builder
-- [ ] User bisa duplikasi workflow sebagai draft baru
-- [ ] User bisa arsipkan workflow tanpa menghapus histori versi
+## PHASE 2 � Workflow Engine Runtime
 
-**Acceptance:**
-- Minimal 10 workflow bisa tersimpan dan ditampilkan tanpa konflik data
-- Perpindahan workflow di UI tidak mencampur `nodes/edges` antar workflow
-- Save/Publish hanya mempengaruhi workflow yang sedang dipilih
-- Workflow archived tidak muncul di default list (kecuali filter aktif)
-
----
-
-## 🔹 PHASE 2 — Workflow Engine Runtime
-
-### 🧩 5. Workflow Run & Execution
-- [ ] Tambah entitas:
+### 5. Workflow Run & Execution
+- [x] Entitas runtime:
   - `workflow_runs`
   - `workflow_run_logs`
   - `workflow_approvals`
-- [ ] Jalankan workflow published berdasarkan event ERP
-- [ ] Pause/resume di node approval
+- [x] Trigger workflow by event
+- [x] Jalankan node per langkah
+- [x] Pause/resume pada approval
+- [x] Logging run untuk audit
 
-**Acceptance:**
-- Setiap run punya jejak log yang bisa diaudit
-- Approval menghasilkan transisi state yang valid (`pending -> approved/rejected`)
+### 5.1. Config-Driven Task Action (Lintas Modul)
+- [x] Eksekusi task/action berbasis `config.action_type` (tidak hardcode inventory)
+- [x] Dukungan action format:
+  - `notification.create`
+  - `<module>.notification.create`
+- [x] Dukungan condition gate via `config.when`
+- [x] Dukungan template notifikasi (`title`, `message_template`) berbasis payload
+- [x] Fallback default notifikasi dari `label`/`description` node task
+
+### 5.2. Integrasi Event dari Sistem
+- [x] Modul inventory mengirim event domain otomatis saat create/update produk
+- [x] Event yang dipakai saat ini: `inventory.product.changed`
+- [x] Payload menyertakan data produk (`product_name`, `stock`, `min_stock`, dll)
+
+---
+
+## Acceptance Terkonfirmasi
+- [x] Workflow dapat dijalankan oleh event sistem
+- [x] Approval menghasilkan transisi valid (`pending -> approved/rejected`)
+- [x] Run memiliki log audit yang dapat diakses API
+- [x] Rule bisnis utama dapat diatur dari config node tanpa ubah kode backend per use case
+
+---
+
+## Backlog Lanjutan
+- [ ] Emitter event generik untuk semua modul ERP (finance, hr, crm, supply-chain)
+- [ ] Validasi graph lebih ketat sebelum publish
+- [ ] Action executor ke service ERP nyata (bukan hanya notification)

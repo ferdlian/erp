@@ -8,6 +8,28 @@ from typing import List
 import crud, models, schemas, auth
 from database import SessionLocal, engine, get_db
 
+def _emit_inventory_event(db: Session, action: str, product: models.Product):
+    payload = {
+        "module": "inventory",
+        "entity": "product",
+        "action": action,
+        "product_id": product.id,
+        "product_name": product.name,
+        "sku": product.sku,
+        "stock": product.current_stock,
+        "min_stock": product.min_stock,
+        "warehouse": product.warehouse,
+    }
+    try:
+        crud.trigger_event_and_run_workflows(
+            db,
+            event_name="inventory.product.changed",
+            payload=payload,
+        )
+    except Exception as exc:
+        # Do not block inventory transaction if workflow engine fails.
+        print(f"[workflow-event] failed to emit inventory.product.changed: {exc}")
+
 def _ensure_column(conn, table_name: str, column_name: str, ddl: str):
     rows = conn.execute(text(f"PRAGMA table_info({table_name})")).fetchall()
     existing_columns = {row[1] for row in rows}
@@ -111,7 +133,9 @@ def read_products(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)
 
 @app.post("/inventory/products", response_model=schemas.Product)
 def create_inventory_product(product: schemas.ProductCreate, db: Session = Depends(get_db)):
-    return crud.create_product(db=db, product=product)
+    db_product = crud.create_product(db=db, product=product)
+    _emit_inventory_event(db, "created", db_product)
+    return db_product
 
 @app.delete("/inventory/products/{product_id}")
 def delete_inventory_product(product_id: int, db: Session = Depends(get_db)):
@@ -125,6 +149,7 @@ def update_erp_product(product_id: int, product: schemas.ProductCreate, db: Sess
     db_product = crud.update_product(db, product_id=product_id, product=product)
     if db_product is None:
         raise HTTPException(status_code=404, detail="Product not found")
+    _emit_inventory_event(db, "updated", db_product)
     return db_product
 
 # HR
@@ -193,6 +218,77 @@ def duplicate_erp_workflow(workflow_id: int, db: Session = Depends(get_db)):
     if db_workflow is None:
         raise HTTPException(status_code=404, detail="Workflow not found")
     return db_workflow
+
+@app.post("/workflows/events", response_model=List[schemas.WorkflowRun])
+def trigger_workflow_event(event: schemas.WorkflowEventTriggerRequest, db: Session = Depends(get_db)):
+    try:
+        return crud.trigger_event_and_run_workflows(db, event_name=event.event_name, payload=event.payload or {})
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+@app.get("/workflows/runs", response_model=List[schemas.WorkflowRun])
+def read_workflow_runs(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
+    return crud.list_workflow_runs(db, skip=skip, limit=limit)
+
+@app.get("/workflows/runs/{run_id}", response_model=schemas.WorkflowRun)
+def read_workflow_run(run_id: int, db: Session = Depends(get_db)):
+    run = crud.get_workflow_run(db, run_id=run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Workflow run not found")
+    return run
+
+@app.get("/workflows/runs/{run_id}/logs", response_model=List[schemas.WorkflowRunLog])
+def read_workflow_run_logs(run_id: int, db: Session = Depends(get_db)):
+    run = crud.get_workflow_run(db, run_id=run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Workflow run not found")
+    return crud.get_workflow_run_logs(db, run_id=run_id)
+
+@app.get("/workflows/approvals/pending", response_model=List[schemas.WorkflowApproval])
+def read_pending_workflow_approvals(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
+    return crud.list_pending_approvals(db, skip=skip, limit=limit)
+
+@app.post("/workflows/runs/{run_id}/approve", response_model=schemas.WorkflowRun)
+def approve_workflow_run(
+    run_id: int,
+    action: schemas.WorkflowApprovalActionRequest,
+    db: Session = Depends(get_db),
+):
+    try:
+        run = crud.decide_workflow_approval(
+            db,
+            run_id=run_id,
+            approve=True,
+            acted_by=action.acted_by,
+            comment=action.comment,
+            payload=action.payload,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if run is None:
+        raise HTTPException(status_code=404, detail="Workflow run not found")
+    return run
+
+@app.post("/workflows/runs/{run_id}/reject", response_model=schemas.WorkflowRun)
+def reject_workflow_run(
+    run_id: int,
+    action: schemas.WorkflowApprovalActionRequest,
+    db: Session = Depends(get_db),
+):
+    try:
+        run = crud.decide_workflow_approval(
+            db,
+            run_id=run_id,
+            approve=False,
+            acted_by=action.acted_by,
+            comment=action.comment,
+            payload=action.payload,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if run is None:
+        raise HTTPException(status_code=404, detail="Workflow run not found")
+    return run
 
 @app.delete("/workflows/{workflow_id}")
 def delete_erp_workflow(workflow_id: int, db: Session = Depends(get_db)):
