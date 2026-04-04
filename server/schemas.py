@@ -100,6 +100,7 @@ class WorkflowNodeBase(BaseModel):
     type: str
     position: Dict[str, float]
     data: Dict[str, Any]
+    config: Optional[Dict[str, Any]] = None
 
 class WorkflowNodeCreate(WorkflowNodeBase):
     pass
@@ -130,6 +131,20 @@ class WorkflowBase(BaseModel):
     name: str
     description: Optional[str] = None
     is_active: Optional[int] = 1
+    status: Optional[str] = "draft"
+
+class WorkflowVersionBase(BaseModel):
+    version_number: int
+    is_active: int
+    definition_json: Dict[str, Any]
+    published_at: Optional[str] = None
+    created_at: str
+
+class WorkflowVersion(WorkflowVersionBase):
+    id: int
+    workflow_id: int
+    class Config:
+        from_attributes = True
 
 class WorkflowCreate(WorkflowBase):
     nodes: List[WorkflowNodeCreate]
@@ -137,8 +152,12 @@ class WorkflowCreate(WorkflowBase):
 
 class Workflow(WorkflowBase):
     id: int
+    active_version_id: Optional[int] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
     nodes: List[WorkflowNode]
     edges: List[WorkflowEdge]
+    versions: List[WorkflowVersion] = []
     class Config:
         orm_mode = True
 
